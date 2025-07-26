@@ -1,0 +1,30 @@
+{
+  "devDependencies": {
+    "concurrently": "^9.0.1",
+    "esbuild": "0.24.0",
+    "tailwindcss": "^3.4.14"
+  },
+  "dependencies": {
+    "@types/node": "^22.7.5",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "name": "client",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "build:esbuild": "node ./prod.esbuild.config.mjs",
+    "build:tailwind": "npx tailwindcss -i ./src/style.css -o ./dist/styles.css",
+    "build": "npm run build:esbuild && npm run build:tailwind",
+    "dev:esbuild": "node ./esbuild.config.mjs --watch",
+    "dev:tailwind": "npx tailwindcss -i ./src/style.css -o ./dist/styles.css --watch",
+    "dev": "concurrently \"npm run dev:esbuild\" \"npm run dev:tailwind\"",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": ""
+}
