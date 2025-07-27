@@ -5,30 +5,42 @@ import numpy as np
 import networkx as nx
 from shapely.geometry import LineString
 
-gdf = gpd.read_file('gdb/build_sidewalk_build_sidewalk.shp')
+gdf = gpd.read_file('gdb/build_sidewalk.shp')
+
 
 # If not, reproject to WGS84
 if gdf.crs.to_epsg() != 4326:
     gdf = gdf.to_crs(epsg=4326)
 
-# Normalize any missing columns
-gdf["Shape_Leng"] = gdf["Shape_Leng"].fillna(0)
-gdf["m5_5_sidew"] = gdf["m5_5_sidew"].fillna(0)
-gdf["m8_1_urban"] = gdf["m8_1_urban"].fillna(0)
-gdf["m9_2_stree"] = gdf["m9_2_stree"].fillna(0)
 
-# Compute a custom routing cost
+gdf = gdf.rename(columns={
+    'm9_2_stree': 'Lighting_Raw',
+    'm9_5_HIN': 'Injury_Raw',
+    'm8_2_parks': 'Parks_Raw',
+    'm8_1_urban': 'TreeCanopy_Raw'
+})
+
+gdf["SHAPE_Leng"] = gdf["SHAPE_Leng"].fillna(0)
+gdf["Lighting_Raw"] = gdf["Lighting_Raw"].fillna(0)
+gdf["Injury_Raw"] = gdf["Injury_Raw"].fillna(0)
+gdf["Parks_Raw"] = gdf["Parks_Raw"].fillna(0)
+gdf["TreeCanopy_Raw"] = gdf["TreeCanopy_Raw"].fillna(0)
+
+from sklearn.preprocessing import MinMaxScaler
+
+columns_to_normalize = ["SHAPE_Leng"]
+scaler = MinMaxScaler()
+
+gdf[columns_to_normalize] = scaler.fit_transform(gdf[columns_to_normalize])
+
 gdf["custom_cost"] = (
-    gdf["Shape_Leng"] * 1.0
-    - gdf["m5_5_sidew"] * 0.5       # more sidewalk = better
-    - gdf["m9_2_stree"] * 0.3       # better street = easier routing
-    - gdf["m8_1_urban"] * 0.2       # more urban = possibly flatter/better infra
+    gdf["SHAPE_Leng"] +
+    # gdf["SHAPE_Leng"] * 10.5 +                        # baseline routing cost
+    (1 - gdf["TreeCanopy_Raw"]) * 0.5 +              # more trees = lower cost
+    (1 - gdf["Parks_Raw"]) * 0.4 +                   # more parks = lower cost
+    (1 - gdf["Lighting_Raw"]) * 0.3 +                # more light = lower cost
+    gdf["Injury_Raw"] * 0.8                          # more injuries = higher cost
 )
-
-gdf["shade_score"] = np.random.uniform(0, 1, len(gdf))
-gdf["slope_score"] = np.random.uniform(0, 10, len(gdf))  # in degrees
-
-gdf["custom_cost"] += gdf["slope_score"] * 1.5 - gdf["shade_score"] * 1.0
 
 
 # Use your precomputed cost
@@ -58,10 +70,15 @@ for idx, row in gdf.iterrows():
         geometry=geom
     )
 
+min_weight = min([d["weight"] for _, _, d in G.edges(data=True)])
+print("Minimum edge weight:", min_weight)
+
+neg_weights = gdf[gdf["custom_cost"] < 0]
+print(f"Number of rows with negative weights: {len(neg_weights)}")
+
 
 # validate the graph
 print(f"Graph has {G.number_of_nodes()} nodes and {G.number_of_edges()} edges")
-
 
 # Build KDTree for fast spatial lookup
 nodes = list(G.nodes)
@@ -85,16 +102,9 @@ def compute_path(start_coord, end_coord):
     if nx.has_path(G, source, target):
         print("A path exists between source and target")
         path = nx.shortest_path(G, source=source, target=target, weight="weight")
+        print("This path has total weight", nx.path_weight(G, path=path, weight="weight"))
         return path
     else:
-        print("No path found between source and target")
-        return None
-
-    try:
-        #Dijkstra's algorithm, weight is the cost_field
-        path = nx.shortest_path(G, source=source, target=target, weight="weight")
-        return path
-    except nx.NetworkXNoPath:
         print("No path found between source and target")
         return None
 
@@ -103,7 +113,6 @@ def compute_path(start_coord, end_coord):
 from shapely.geometry import LineString
 
 def path_to_linestring(path):
-    print("path2linestring", path)
     if not path:
         return None
 
@@ -111,13 +120,18 @@ def path_to_linestring(path):
     segments = [
         G[path[i]][path[i+1]]["geometry"] for i in range(len(path) - 1)
     ]
-    coords = [pt for line in segments for pt in line.coords]
-    return LineString(coords)
-
-# export to geojson for web
-import json
+    # coords = [pt for line in segments for pt in line.coords]
+    coords = [LineString(line.coords) for line in segments]
+    return coords
+    # return LineString(coords)
 
 from geojson import Feature, FeatureCollection, dumps
+
+def segs_to_geojson(segments):
+    if not segments:
+        return {}
+    features = [Feature(geometry=segment, properties={}) for segment in segments]
+    return FeatureCollection(features)
 
 def route_to_geojson(linestring):
     if not linestring:
@@ -138,17 +152,15 @@ def route():
     try:
         start = request.args.get("start")  # e.g., "-117.189,34.050"
         end = request.args.get("end")      # e.g., "-117.183,34.065"
- 
+
         start_coord = tuple(map(float, start.split(",")))
         end_coord = tuple(map(float, end.split(",")))
- 
-        path = compute_path(start_coord, end_coord)           
-        print(path)
-        linestring = path_to_linestring(path)                 
-        print(linestring)
-        geojson = route_to_geojson(linestring)
-        print(geojson)
- 
+
+        path = compute_path(start_coord, end_coord)
+        linestring = path_to_linestring(path)
+        # geojson = route_to_geojson(linestring)
+        geojson = segs_to_geojson(linestring)
+
         return jsonify(geojson)
  
     except Exception as e:
