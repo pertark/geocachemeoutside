@@ -12,3 +12,30 @@ body {
     height: 100%;
     margin: 0;
 }
+
+.green-chip {
+    --calcite-chip-background-color: green;
+    --calcite-chip-text-color: white;
+}
+
+.green-chip:hover {
+    --calcite-chip-text-color: black;
+}
+
+.night-chip {
+    --calcite-chip-background-color: blue;
+    --calcite-chip-text-color: white;
+}
+
+.night-chip:hover {
+    --calcite-chip-text-color: black;
+}
+
+.holistic-chip {
+    --calcite-chip-background-color: purple;
+    --calcite-chip-text-color: white;
+}
+
+.holistic-chip:hover {
+    --calcite-chip-text-color: black;
+}

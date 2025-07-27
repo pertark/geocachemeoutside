@@ -12,42 +12,23 @@ import { CalciteChip, CalciteChipGroup } from "@esri/calcite-components-react";
 
 function App() {
     const mapView = React.useRef(null);
-    const [activeChip, setActiveChip] = React.useState<string>("");
+    const [activeChips, setActiveChips] = React.useState<string[]>([]);
     const [showTooltip, setShowTooltip] = React.useState(true);
     const [currentRoute, setCurrentRoute] = React.useState([]);
     const [routeFraction, setRouteFraction] = React.useState(1); // 1 = 100%
     const [selectingPoint, setSelectingPoint] = React.useState(false);
     const [selectedLatLng, setSelectedLatLng] = React.useState<{lat: number, lng: number} | null>(null);
+    const [pointMode, setPointMode] = React.useState<"start" | "end">("start");
+    const [startPoint, setStartPoint] = React.useState<{ lat: number, lng: number } | null>(null);
+    const [endPoint, setEndPoint] = React.useState<{ lat: number, lng: number } | null>(null);
+    const startMarkerRef = React.useRef<any>(null);
+    const endMarkerRef = React.useRef<any>(null);
 
     const handleViewReady = (event) => {
         console.log(event)
         const viewElement = event.target;
         mapView.current = viewElement;
 
-        // 38.8894541,-77.0377464
-        const point = {
-          type: "point",
-          longitude: -77.0352464,
-          latitude: 38.8894541,
-        };
-
-        const markerSymbol = {
-          type: "simple-marker",
-          style: "triangle",
-          size: 15,
-          color: "red",
-          outline: {
-            color: "white",
-            width: 2,
-          },
-        };
-
-        const pointGraphic = new Graphic({
-          geometry: point,
-          symbol: markerSymbol,
-        });
-
-        viewElement.graphics.add(pointGraphic);
         viewElement.zoom = 14
         viewElement.center = [-77.0352464, 38.8894541]
     };
@@ -83,27 +64,43 @@ function App() {
 
     const fetchRoute = () => {
         const fromMaps = (x, y) => [y, x];
-        const start = fromMaps(38.900336, -77.036221);
+        console.log("active chips", activeChips);
+        const modeToColor = {
+            normal_cost: "purple",
+            night_cost: "blue",
+            green_cost: "green"
+        }
+        console.log("fetching route from", startPoint, "to", endPoint);
+        // const start = fromMaps(38.900336, -77.036221);
         // const end = fromMaps(38.9204575,-77.07953);
 
-        const end = fromMaps(38.916569,-77.0314635);
+        // const end = fromMaps(38.916569,-77.0314635);
+        const start = startPoint ? [startPoint.lng, startPoint.lat] : [0, 0];
+        const end = endPoint ? [endPoint.lng, endPoint.lat] : [0, 0];
         console.log("start", start, "end", end);
 
-        const renderer = {
-            type: "simple", // Autocasts as new SimpleRenderer()
-            symbol: {
-                type: "simple-line", // Change from "simple-marker" to "simple-line"
-                color: "green",
-                width: 4
-            }
-        };
-        const geojsonLayer = new GeoJSONLayer({
-            url: `http://localhost:5000/route?start=${start.join(',')}&end=${end.join(',')}`, 
-            renderer: renderer
-        });
-        mapView.current.map.add(geojsonLayer);
-        addMarker(start, "blue", "circle");
-        addMarker(end, "red", "triangle");
+        if (activeChips.length === 0) {
+            console.warn("No active chips selected, defaulting to normal route");
+            activeChips.push("normal_cost");
+        }
+        for (const cost of activeChips) {
+            const renderer = {
+                type: "simple", // Autocasts as new SimpleRenderer()
+                symbol: {
+                    type: "simple-line", // Change from "simple-marker" to "simple-line"
+                    color: modeToColor[cost] || "purple",
+                    width: 4
+                }
+            };
+            const geojsonLayer = new GeoJSONLayer({
+                url: `http://localhost:5000/route?start=${start.join(',')}&end=${end.join(',')}&cost=${cost}`, 
+                renderer: renderer
+            });
+            mapView.current.map.add(geojsonLayer);
+        }
+        
+        // addMarker(start, "blue", "circle");
+        // addMarker(end, "red", "triangle");
         // fetch(`http://localhost:5000/route?start=${start.join(',')}&end=${end.join(',')}`)
         //     .then(x => x.json())
         //     .then((x) => x.features[0].geometry.coordinates)
@@ -154,6 +151,77 @@ function App() {
       mapView.current.graphics.add(polylineGraphic);
     }
 
+    // Helper to clear previous markers
+    const clearMarker = (ref) => {
+        if (mapView.current && ref.current) {
+            mapView.current.graphics.remove(ref.current);
+            ref.current = null;
+        }
+    };
+
+    // Place a marker for start or end
+    const placeMarker = (lng: number, lat: number, mode: "start" | "end") => {
+        if (!mapView.current) return;
+        if (mode === "start") clearMarker(startMarkerRef);
+        if (mode === "end") clearMarker(endMarkerRef);
+
+        const point = {
+            type: "point",
+            longitude: lng,
+            latitude: lat,
+        };
+        const markerSymbol = {
+            type: "simple-marker",
+            style: mode === "start" ? "diamond" : "circle",
+            size: 15,
+            color: mode === "start" ? "orange" : "blue",
+            outline: {
+                color: "white",
+                width: 2,
+            },
+        };
+        const pointGraphic = new Graphic({
+            geometry: point,
+            symbol: markerSymbol,
+        });
+        mapView.current.graphics.add(pointGraphic);
+
+        if (mode === "start") {
+            startMarkerRef.current = pointGraphic;
+            setStartPoint({ lat, lng });
+            setPointMode("end"); // Automatically switch to end point mode
+        } else {
+            endMarkerRef.current = pointGraphic;
+            setEndPoint({ lat, lng });
+        }
+    };
+
+    // Handler for search select event
+    const handleSearchSelect = (event) => {
+        const result = event.detail?.results?.[0]?.results?.[0];
+        if (result && result.feature && result.feature.geometry) {
+            const { latitude, longitude } = result.feature.geometry;
+            placeMarker(longitude, latitude, pointMode);
+        }
+    };
+
+    // Map click handler for "select point on map"
+    React.useEffect(() => {
+        if (!mapView.current) return;
+        let handler;
+        if (selectingPoint) {
+            handler = mapView.current.view.on("click", (event) => {
+                const { latitude, longitude } = event.mapPoint;
+                placeMarker(longitude, latitude, pointMode);
+                setSelectingPoint(false);
+            });
+        }
+        return () => {
+            if (handler) handler.remove();
+        };
+        // eslint-disable-next-line
+    }, [selectingPoint, pointMode]);
+
     // Add map click handler for point selection
     React.useEffect(() => {
         if (!mapView.current) return;
@@ -168,7 +236,7 @@ function App() {
                 setSelectingPoint(false);
 
                 // Optionally add a marker at the selected point
-                addMarker([longitude, latitude], "orange", "diamond");
+                // addMarker([longitude, latitude], "orange", "diamond");
             });
         }
         return () => {
@@ -176,18 +244,6 @@ function App() {
         };
         // eslint-disable-next-line
     }, [selectingPoint]);
-
-    // Handler for search select event
-    const handleSearchSelect = (event) => {
-        event.preventDefault(); // Prevent default pan/zoom
-        const result = event.detail?.result;
-        if (result && result.feature && result.feature.geometry) {
-            const { latitude, longitude } = result.feature.geometry;
-            // Do what you want with the coordinates:
-            setSelectedLatLng({ lat: latitude, lng: longitude });
-            addMarker([longitude, latitude], "purple", "circle");
-        }
-    };
 
     return (
         <div>
@@ -198,17 +254,14 @@ function App() {
                   style={{ minWidth: 320 }}
                 >
                   <div className="flex flex-col gap-2">
-                    <div className="font-bold text-lg mb-1">Walk This Way</div>
+                    <div className="text-lg mb-1"><span className='font-bold'>Walk This Way</span> personalizes your walking path based on your selected preferences. </div>
                     <div>
-                      Walk This Way personalizes your walking path based on your selected preferences. <br />
                       <span role="img" aria-label="tree">🌳</span>
-                      <b>Trees/shade:</b> Paths with high tree coverage<br />
-                      <span role="img" aria-label="slope">⛰️</span>
-                      <b>Slope:</b> Paths with low slope<br />
-                      <span role="img" aria-label="accessibility">♿</span>
-                      <b>Accessibility:</b> Paths with presence of curb cuts and ramps<br />
+                      <b>Trees/shade:</b> Paths with high tree coverage and access to parks.<br />
                       <span role="img" aria-label="night mode">🌙</span>
-                      <b>Night mode:</b> Paths that are well-lit at night<br />
+                      <b>Night mode:</b> Paths with street lamps with pass through areas with low crime.  <br />
+                      <span role="img" aria-label="holistic mode">🚸</span>
+                      <b>Holistic mode:</b> Paths that combine both Green Mode and Night Mode.
                     </div>
                     <button
                       className="self-end mt-2 px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700"
@@ -223,43 +276,67 @@ function App() {
                 <div className='flex md:flex-row flex-col'>
                     <arcgis-search
                         className="z-10"
-                        all-placeholder="Where are you walking to?"
-                        onArcgisSearchSelect={handleSearchSelect}
-                    ></arcgis-search>     
+                        all-placeholder={`Where is your ${pointMode === "start" ? "start" : "end"} point?`}
+                        onarcgisSearchComplete={handleSearchSelect}
+                    ></arcgis-search>
                 </div>
             </arcgis-map>
-            <div id="map-overlay" className="absolute top-0 p-[12px] w-screen pointer-events-none">
-                <div className="flex md:flex-row flex-col ">
-                    <div className='ml-[250px] w-[1px] h-[38px]' ></div>
+
+            <div id="map-overlay" className="absolute top-0 left-0 w-full pointer-events-none z-50 pt-[12px]">
+                <div className="flex flex-row gap-2">
+                    <div className='ml-[250px] w-[1px] h-[38px]'></div>
                     <div className='pointer-events-auto'>
-                        <div className='pt-[6px] pointer-events-auto'>
-                            <CalciteChipGroup
-                                selection-mode="single"
-                                scale="s"
-                                onCalciteChipSelect={(e) => {
-                                  const selectedValue = (e.target as HTMLCalciteChipGroupElement)
-                                    .selectedItems?.[0]?.value;
-                                  setActiveChip(selectedValue || "");
-                                }}
-                              >
-                                <CalciteChip value="streets" label="streets">Streets</CalciteChip>
-                                <CalciteChip value="satellite" label="satellite">Satellite</CalciteChip>
-                                <CalciteChip value="terrain" label="terrain">Terrain</CalciteChip>
-                          </CalciteChipGroup>
-                        </div>
-                        <button onClick={fetchRoute}>test</button>
-                        <button
-                            className="mt-2 px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700"
+                        <calcite-button
+                            className="mr-2 text-white h-[36px]"
                             onClick={() => setSelectingPoint(true)}
                             disabled={selectingPoint}
                         >
-                            {selectingPoint ? "Click on map..." : "Select Point on Map"}
-                        </button>
-                        {selectedLatLng && (
-                            <div className="mt-2 text-sm">
-                                Selected: <b>Lat:</b> {selectedLatLng.lat.toFixed(6)}, <b>Lng:</b> {selectedLatLng.lng.toFixed(6)}
-                            </div>
-                        )}
+                            {selectingPoint ? "Click on map..." : "or select a point on map"}
+                        </calcite-button>
+                    </div>
+                    {/* Toggle Switch */}
+                    <div className="pointer-events-auto">
+                        <calcite-button
+                            className={`mr-2 h-[36px]`}
+                            style={{ '--calcite-button-background-color': pointMode === "start" ? "orange" : "blue",
+                                '--calcite-button-text-color': pointMode === "start" ? "black" : "white"
+                             }}
+                            onClick={() => setPointMode("start" === pointMode ? "end" : "start")}
+                        >
+                            {pointMode === "start" ? "🔶 Set start point" : "🔵 Set end point"}
+                        </calcite-button>
+                    </div>
+                    <div className="pointer-events-auto">
+                        <calcite-button
+                            className={`mr-2 h-[36px]`}
+                            style={{ '--calcite-button-background-color': 'green' }}
+                            onClick={fetchRoute}
+                        >
+                            Find Route!
+                        </calcite-button>
+                    </div>
+                    {/* "or select a point on map" button */}
+                    <div className='pointer-events-auto'>
+        
+                        <div className='pt-[6px] pointer-events-auto'>
+                            <CalciteChipGroup
+                                selection-mode="multiple"
+                                scale="s"
+                                oncalciteChipGroupSelect={(e) => {
+                                    console.log("Chip selected:", e);
+                                  const selectedValues = (e.target as HTMLCalciteChipGroupElement)
+                                    .selectedItems?.map(item => item.value) || [];
+                                  setActiveChips(selectedValues);
+                                }}
+                              >
+                                
+                                <CalciteChip value="green_cost" label="green" className="green-chip">Green</CalciteChip>
+                                <CalciteChip value="night_cost" label="night" className="night-chip">Night</CalciteChip>
+                                <CalciteChip value="normal_cost" label="holistic" className="holistic-chip">Holistic</CalciteChip>
+
+                          </CalciteChipGroup>
+                        </div>
+                        {/* <button onClick={fetchRoute}>test</button> */}
                         {/* Slider for route fraction */}
                         {currentRoute.length > 1 && (
                           <div className="mt-4">
